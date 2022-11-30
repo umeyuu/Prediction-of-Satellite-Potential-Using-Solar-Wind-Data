@@ -5,6 +5,7 @@ from datetime import datetime
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 import pandas as pd
+import os
 
 class MyDataset(Dataset):
     def __init__(self, paths, window_size):
@@ -18,11 +19,13 @@ class MyDataset(Dataset):
         for path in paths:
             df_tmp = self.load_data(path, df)
             df = df_tmp
+        df = df[df.flow_speed != 99999.898438]
         self.df = df
 
         # 正規化処理
         scaler = MinMaxScaler()
         self.train_array = scaler.fit_transform(df)
+        
         self.date = df.index
         self.input_size = len(df)
         self.window_size = window_size
@@ -36,6 +39,7 @@ class MyDataset(Dataset):
     def load_data(self, path, df):
         # cdfファイル読み込み
         cdf_file = cdflib.CDF(path)
+        # 説明変数
         X = ['BX_GSE', 'BY_GSM', 'BZ_GSM', 'flow_speed', 'Vx', 'Vy', 'Vz', 'proton_density', 'T', 'Pressure']
         tmp = []
         for x in X:
@@ -44,12 +48,18 @@ class MyDataset(Dataset):
         # 時間
         epoch = cdflib.cdfepoch.unixtime(cdf_file['Epoch'])
         date = [datetime.utcfromtimestamp(e) for e in epoch]
+
         df_tmp = pd.DataFrame(tmp.T, columns=X, index=date)
+
         return pd.concat([df, df_tmp])
 
 
-
-path = ['DATA/omni_hro_1min_20100101_v01.cdf', 'DATA/omni_hro_1min_20100201_v01.cdf']
-dataset = MyDataset(path, 5)
+for year in range(2010, 2015):
+    dir = f'DATA/solar_wind/{year}/'
+    files = os.listdir(dir)
+    file_lis = [dir+f for f in files if os.path.isfile(os.path.join(dir, f))]
+    file_lis = sorted(file_lis)
+dataset = MyDataset(file_lis, 5)
 print(dataset[0])
 breakpoint()
+

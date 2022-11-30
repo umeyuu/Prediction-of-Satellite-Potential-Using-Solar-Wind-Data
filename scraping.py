@@ -1,7 +1,7 @@
 import urllib.request
 import os
 
-
+# dmspデータの取得
 def save_satelite_data(name):
     for year in range(2010, 2015):
         for month in range(1, 13):
@@ -20,6 +20,25 @@ def save_satelite_data(name):
                 except:
                     print(f'{file_name}の保存に失敗しました。')
                     continue
+
+# 太陽風データの取得
+def save_solar_wind_data():
+    for year in range(2010, 2015):
+        for month in range(1, 13):
+            year = str(year)
+            month = str(month).zfill(2)
+            
+            path = f'https://spdf.gsfc.nasa.gov/pub/data/omni/omni_cdaweb/hro_1min/{year}/omni_hro_1min_{year}{month}01_v01.cdf'
+            save_dir = f'./DATA/solar_wind/{year}/'
+            file_name = f'omni-{year}{month}.cdf' 
+
+            if not os.path.isdir(save_dir):
+                os.makedirs(save_dir)
+            try:
+                urllib.request.urlretrieve(path, save_dir+file_name)
+            except:
+                print(f'{file_name}の保存に失敗しました。')
+                continue
 
 
 def serch_fail_to_save(name):
@@ -68,6 +87,7 @@ def check_save_term(name):
                     print(f'{st}~{et}まで{count}個あるよ。')
                     count = 0
 
-save_satelite_data('f18')
+# save_satelite_data('f18')
 # check_save_term('f17')
 # breakpoint()
+save_solar_wind_data()
