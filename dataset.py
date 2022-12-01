@@ -8,12 +8,14 @@ import pandas as pd
 import os
 
 class MyDataset(Dataset):
-    def __init__(self, paths, window_size):
+    def __init__(self, window_size):
         '''''
         args
         paths : 読み込みファイルのpathの配列,  window_size : 過去何個のデータをモデルに入力するか
         '''''
         super().__init__()
+
+        paths = self.get_file_path()
 
         df = pd.DataFrame()
         for path in paths:
@@ -47,6 +49,17 @@ class MyDataset(Dataset):
         x = self.train_array[i-self.window_size : i]
 
         return np.array(x), y[0][1:]
+
+    # 太陽風データファイルのパスを取得
+    def get_file_path(self):
+        file_lis = []
+        for year in range(2010, 2015):
+            dir = f'DATA/solar_wind/{year}/'
+            files = os.listdir(dir)
+            tmp = [dir+f for f in files if os.path.isfile(os.path.join(dir, f))]
+            tmp = sorted(tmp)
+            file_lis.extend(tmp)
+        return file_lis
     
     def load_data(self, path, df):
         # cdfファイル読み込み
@@ -66,15 +79,9 @@ class MyDataset(Dataset):
 
         return pd.concat([df, df_tmp])
 
-file_lis = []
-for year in range(2010, 2015):
-    dir = f'DATA/solar_wind/{year}/'
-    files = os.listdir(dir)
-    tmp = [dir+f for f in files if os.path.isfile(os.path.join(dir, f))]
-    tmp = sorted(tmp)
-    file_lis.extend(tmp)
 
-dataset = MyDataset(file_lis, 60)
+
+dataset = MyDataset(60)
 print(dataset[0])
 breakpoint()
 
