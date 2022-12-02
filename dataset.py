@@ -15,18 +15,15 @@ class MyDataset(Dataset):
         '''''
         super().__init__()
 
-        paths = self.get_file_path()
-
-        df = pd.DataFrame()
-        for path in paths:
-            df_tmp = self.load_data(path, df)
-            df = df_tmp
+        # 太陽風データを取得
+        df = pd.read_csv('DATA/solar_wind/solar_wind_data.csv', parse_dates=["date"], index_col=False)
+        df.drop('Unnamed: 0', axis=1, inplace=True)
         # df = df[df.flow_speed != 99999.898438]
-        df = df.reset_index(drop=True)
         self.x_time = df.date
         self.df_solar = df.copy()
         df.drop('date', axis=1, inplace=True)
 
+        # 衛星データを取得
         df_sat = pd.read_csv('DATA/dmsp-f16/dmsp-f16_data.csv', parse_dates=["date"])
         df_sat = df_sat.sort_values('date')
         self.df_sat = df_sat.reset_index(drop=True)
@@ -50,38 +47,8 @@ class MyDataset(Dataset):
 
         return np.array(x), y[0][1:]
 
-    # 太陽風データファイルのパスを取得
-    def get_file_path(self):
-        file_lis = []
-        for year in range(2010, 2015):
-            dir = f'DATA/solar_wind/{year}/'
-            files = os.listdir(dir)
-            tmp = [dir+f for f in files if os.path.isfile(os.path.join(dir, f))]
-            tmp = sorted(tmp)
-            file_lis.extend(tmp)
-        return file_lis
-    
-    def load_data(self, path, df):
-        # cdfファイル読み込み
-        cdf_file = cdflib.CDF(path)
-        # 説明変数
-        X = ['BX_GSE', 'BY_GSM', 'BZ_GSM', 'flow_speed', 'Vx', 'Vy', 'Vz', 'proton_density', 'T', 'Pressure']
-        tmp = []
-        for x in X:
-            tmp.append(cdf_file[x])
-        tmp = np.array(tmp)
-        # 時間
-        epoch = cdflib.cdfepoch.unixtime(cdf_file['Epoch'])
-        date = [datetime.utcfromtimestamp(e) for e in epoch]
-
-        df_tmp = pd.DataFrame(tmp.T, columns=X)
-        df_tmp['date'] = date
-
-        return pd.concat([df, df_tmp])
-
-
 
 dataset = MyDataset(60)
-print(dataset[0])
+x, y = dataset[0]
 breakpoint()
 
