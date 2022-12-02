@@ -3,6 +3,10 @@ from torch.utils.data import Dataset, DataLoader
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 import pandas as pd
+from model import MyModel
+
+import os
+os.environ["CUDA_DEVICE_ORDER"] = 'MIG-10d45f35-eccc-50c5-a994-7971ed3e6673'
 
 class MyDataset(Dataset):
     def __init__(self, window_size):
@@ -39,10 +43,13 @@ class MyDataset(Dataset):
         time = self.target_time[index]
         y = self.df_sat[index:index+1].values
         y = y[0][1:].tolist()
-        ind = self.x_time[self.x_time == time].index.item() + 1
-        x = self.train_array[ind-self.window_size : ind]
+        tgt = y[:-1]
+        ans = y[-1]
 
-        return torch.tensor(x), torch.tensor(y)
+        ind = self.x_time[self.x_time == time].index.item() + 1
+        src = self.train_array[ind-self.window_size : ind]
+
+        return torch.tensor(src).to(torch.float32), torch.tensor(tgt).to(torch.float32), torch.tensor(ans).to(torch.float32)
     
     def process_nan(self, df):
         X = df.columns
@@ -58,7 +65,14 @@ class MyDataset(Dataset):
 
 train_data = MyDataset(60)
 trainloader = DataLoader(train_data, batch_size = 8, shuffle = True)
-
-for x, y in trainloader:
-    print(x, y)
+model = MyModel()
+for src, tgt, ans in trainloader:
     breakpoint()
+    out = model(src, tgt)
+    
+
+# device = torch.device('cuda')
+# a = torch.tensor([1, 1])
+# # breakpoint()
+# a.to(device)
+
