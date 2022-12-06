@@ -1,12 +1,12 @@
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
+
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 import pandas as pd
-from model import MyModel
 
-import os
-os.environ["CUDA_DEVICE_ORDER"] = 'MIG-10d45f35-eccc-50c5-a994-7971ed3e6673'
+import math
+
 
 class MyDataset(Dataset):
     def __init__(self, window_size):
@@ -24,10 +24,17 @@ class MyDataset(Dataset):
         self.df_solar = df.copy()
        
         # 衛星データを取得
-        df_sat = pd.read_csv('DATA/dmsp-f16_data.csv', parse_dates=["date"])
+        df_sat = pd.DataFrame()
+        for i in range(16, 18):
+            tmp = pd.read_csv(f'DATA/dmsp-f{i}/dmsp-f{i}_only_aurora_area.csv', parse_dates=["date"])
+            df_sat = pd.concat([df_sat, tmp])
+
         df_sat = df_sat.sort_values('date')
         self.df_sat = df_sat.reset_index(drop=True)
         self.target_time = self.df_sat.date
+
+        self.lat_m = df_sat.lat.mean()
+        self.lat_s = df_sat.lat.std()
 
         # 正規化処理
         scaler = MinMaxScaler()
@@ -44,12 +51,15 @@ class MyDataset(Dataset):
         y = self.df_sat[index:index+1].values
         y = y[0][1:].tolist()
         tgt = y[:-1]
+        tgt = self.norm_latlon(tgt)
         ans = y[-1]
+        if ans > 0:
+            ans = 1
 
         ind = self.x_time[self.x_time == time].index.item() + 1
         src = self.train_array[ind-self.window_size : ind]
 
-        return torch.tensor(src).to(torch.float32), torch.tensor(tgt).to(torch.float32), torch.tensor(ans).to(torch.float32)
+        return torch.tensor(src).to(torch.float32), torch.tensor(tgt).to(torch.float32), torch.tensor(ans).long()
     
     def process_nan(self, df):
         X = df.columns
@@ -62,17 +72,23 @@ class MyDataset(Dataset):
         df = df.interpolate()
         return df
 
+    #  緯度経度の正規化
+    def norm_latlon(self, latlon):
+        lat = latlon[0]
+        lon = latlon[1]
+        # lat = math.sin(lat*(math.pi/180))
+        lat = (lat - self.lat_m) / self.lat_s
+        lon = math.sin(lon/2)
+        out = [lat, lon]
+        return out
 
-train_data = MyDataset(60)
-trainloader = DataLoader(train_data, batch_size = 8, shuffle = True)
-model = MyModel()
-for src, tgt, ans in trainloader:
-    breakpoint()
-    out = model(src, tgt)
-    
 
-# device = torch.device('cuda')
+
+
+
+
 # a = torch.tensor([1, 1])
-# # breakpoint()
-# a.to(device)
-
+# b = torch.tensor([1, 1])
+# a = a.to(device)
+# b = b.to(device)
+# print(a, b)

@@ -181,10 +181,13 @@ class TransformerEncoder(nn.Module):
         
         self.layer_norm_emb = nn.LayerNorm(d_model, layer_norm_eps)
         self.layer_norm_out = nn.LayerNorm(d_model, layer_norm_eps)
+
+        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=heads_num)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=enc_layer_num)
         
-        self.encoder_layers = nn.ModuleList(
-            [TransfomerEncoderLayer(d_model, d_ff, heads_num, dropout_rate, layer_norm_eps) for _ in range(enc_layer_num)]
-        )
+        # self.encoder_layers = nn.ModuleList(
+        #     [TransfomerEncoderLayer(d_model, d_ff, heads_num, dropout_rate, layer_norm_eps) for _ in range(enc_layer_num)]
+        # )
     
     def forward(self, x, mask=None):
         x = self.x_expand(x)
@@ -192,39 +195,70 @@ class TransformerEncoder(nn.Module):
         
         x = self.layer_norm_emb(x)
 
-        for encoder_layer in self.encoder_layers:
-            x = encoder_layer(x, mask)
+        x = self.transformer_encoder(x)
 
-        # Pre-LN
-        x = self.layer_norm_out(x)
+        # for encoder_layer in self.encoder_layers:
+        #     x = encoder_layer(x, mask)
+
+        # # Pre-LN
+        # x = self.layer_norm_out(x)
         return x
+
+class GLU(nn.Module):
+    def __init__(self, d_model, out_size):
+        super().__init__()
+        self.linear1 = nn.Linear(d_model, d_model)
+        self.linear2 = nn.Linear(d_model, d_model)
+        self.linear3 = nn.Linear(d_model, out_size)
+        # 活性化関数
+        self.sigmoid = nn.Sigmoid()
+        self.relu = nn.ReLU()
+        self.gelu = nn.GELU()
+
+    def forward(self, x):
+        u = self.linear1(x)
+        u = self.relu(u)
+        v = self.linear2(x)
+        o = self.linear3(torch.mul(u, v))
+        return o
+
 
 
 class Decoder(nn.Module):
-    def __init__(self, d_model, out_size):
+    def __init__(self, d_model, out_size, layer_norm_eps):
         super().__init__()
         self.expand = nn.Linear(2, d_model)
+        self.layer_norm = nn.LayerNorm(d_model, eps=layer_norm_eps)
+        self.glu = GLU(d_model, d_model)
         self.liner = nn.Linear(d_model, out_size)
     
     def forward(self, src, tgt):
         tgt = self.expand(tgt)
-        return self.liner(src+tgt)
+        h = self.layer_norm(src + tgt)
+        h = self.glu(h)
+
+        return self.liner(h)
 
     
 class MyModel(nn.Module):
-    def __init__(self, out_size=1, max_len=60, d_model=512, heads_num=8, d_ff=2048, enc_layer_num=6, dropout_rate=0.1, layer_norm_eps=1e-5):
+    def __init__(self, out_size=2, max_len=60, d_model=512, heads_num=8, d_ff=2048, enc_layer_num=6, dropout_rate=0.1, layer_norm_eps=1e-5):
         super().__init__()
         
         self.encoder = TransformerEncoder(max_len, d_model, enc_layer_num, d_ff, heads_num, dropout_rate, layer_norm_eps)
-        self.decoder = Decoder(d_model, out_size)
-        self.linear = nn.Linear(d_model, out_size)
+        self.decoder = Decoder(d_model, out_size, layer_norm_eps)
+        self.linear1 = nn.Linear(max_len*d_model, d_model)
+        self.relu = nn.ReLU()
         
         
     def forward(self, src, tgt):
         
+        batch_size, _, _ = src.size() 
         src = self.encoder(src)
-        # out = self.decoder(src, tgt)
+        src = src.view(batch_size, -1)
+        src = self.linear1(src)
+        
+        out = self.decoder(src, tgt)
         # return F.log_softmax(output, dim=-1)
         # return output
-        return src
+        return out
  
