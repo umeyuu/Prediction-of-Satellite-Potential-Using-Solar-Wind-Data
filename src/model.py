@@ -175,7 +175,7 @@ class TransformerEncoder(nn.Module):
     def __init__(self, max_len, d_model, enc_layer_num, d_ff, heads_num, dropout_rate, layer_norm_eps):
         super().__init__()
         
-        self.x_expand = nn.Linear(11, d_model)
+        self.x_expand = nn.Linear(10, d_model)
         self.positional_embeding = PositionalEmbeding(max_len, d_model)
         # self.positional_embeding = AddPositionalEncoding(d_model, max_len)
         
@@ -214,10 +214,11 @@ class GLU(nn.Module):
         self.sigmoid = nn.Sigmoid()
         self.relu = nn.ReLU()
         self.gelu = nn.GELU()
+        self.silu = nn.SiLU()
 
     def forward(self, x):
         u = self.linear1(x)
-        u = self.relu(u)
+        u = self.silu(u)
         v = self.linear2(x)
         o = self.linear3(torch.mul(u, v))
         return o
@@ -241,7 +242,7 @@ class Decoder(nn.Module):
 
     
 class MyModel(nn.Module):
-    def __init__(self, out_size=2, max_len=60, d_model=512, heads_num=8, d_ff=2048, enc_layer_num=6, dropout_rate=0.1, layer_norm_eps=1e-5):
+    def __init__(self, out_size=103, max_len=60, d_model=512, heads_num=8, d_ff=2048, enc_layer_num=6, dropout_rate=0.1, layer_norm_eps=1e-5):
         super().__init__()
         
         self.encoder = TransformerEncoder(max_len, d_model, enc_layer_num, d_ff, heads_num, dropout_rate, layer_norm_eps)
@@ -258,7 +259,7 @@ class MyModel(nn.Module):
         src = self.linear1(src)
         
         out = self.decoder(src, tgt)
-        # return F.log_softmax(output, dim=-1)
+        return F.softmax(out, dim=-1)
         # return output
         return out
  
