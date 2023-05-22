@@ -5,6 +5,7 @@ import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 import pandas as pd
 
+from typing import Tuple
 import math
 
 
@@ -100,10 +101,14 @@ class MyDataset2(Dataset):
         df_charge = df_charge.dropna(how='any').reset_index(drop=True) # 欠損値処理
         df_charge['five_label'] = df_charge.apply(self.sum_five, axis=1)
         df_charge['ten_label'] = df_charge.apply(self.sum_ten, axis=1)
-        self.df_charge = self.undersampling(df_charge) # アンダーサンプリング
+        # df_charge = self.SearchBalancedData(df_charge, num=1000, col='five_label') # 均衡データになるようにラベルを振り直す
+        self.df_charge = self.undersampling(df_charge, num=1000, col='five_label') # アンダーサンプリング
 
         self.time = self.df_charge['date'].values
-        self.charge_count = self.df_charge['ten_label'].values
+        self.charge_count = self.df_charge['five_label'].values
+        # 緯度の平均と標準偏差を取得
+        self.lat_m = self.df_charge.lat.abs().mean()
+        self.lat_s = self.df_charge.lat.abs().std()
 
     def __len__(self):
         return len(self.time)
@@ -150,6 +155,9 @@ class MyDataset2(Dataset):
         # 緯度経度をラジアンに変換
         lat = abs(latlon[0])
         lon = latlon[1] * np.pi /12
+        # 緯度経度を正規化
+        lat = (lat - self.lat_m) / self.lat_s
+        lon = math.sin(lon/2)
         tgt = [lat, lon]
         
         return torch.tensor(tgt).to(torch.float32)
@@ -166,18 +174,142 @@ class MyDataset2(Dataset):
         return df
     
     # アンダーサンプリング
-    def undersampling(self, df, num=1000):
+    def undersampling(self, df, num=1000, col: str ='ten_label'):
 
-        charge_counts = df.ten_label.unique()
+        charge_counts = df[col].unique()
         df_new = pd.DataFrame()
 
         for count in charge_counts:
-            df_tmp = df[df['ten_label'] == count]
+            df_tmp = df[df[col] == count]
             if len(df_tmp) > num:
                 df_tmp = df_tmp.sample(n=num)
-            df_new = pd.concat([df_new, df_tmp])
+                df_new = pd.concat([df_new, df_tmp])
         
         df_new = df_new.sort_values(by='date')
         df_new.reset_index(drop=True, inplace=True)
         
         return df_new
+    
+    # 均衡データを取得
+    def SearchBalancedData(self, df: pd.DataFrame, num: int, col: str = 'ten_label'):
+        charge_dict = df[col].value_counts().to_dict()
+        charge_dict = sorted(charge_dict.items())
+        count = 0
+        key_list = []
+        value_list = []
+        ans = dict()
+
+        for k, v in charge_dict:
+            count += v
+            value_list.append(v)
+            key_list.append(k)
+            if count > num:
+                weighted_average = np.dot(key_list, value_list) / count
+                for k in key_list:
+                    ans[k] = weighted_average
+                count = 0
+                value_list = []
+                key_list = []
+
+        weighted_average = np.dot(key_list, value_list) / count
+        for k in key_list:
+            ans[k] = weighted_average
+        
+        df[col] = df[col].apply(lambda x: ans[x])
+        return df
+    
+
+
+
+
+class MyDataset3(Dataset):
+    def __init__(self, window_size: int) -> None:
+
+        self.window_size = window_size
+
+        df_charge = pd.read_csv('dmsp-f16.csv', parse_dates=['date'])
+        df_solar = pd.read_csv('solar_wind.csv', parse_dates=['date'])
+        df_solar = self.normalize_SolarWind(df_solar)
+        df = pd.merge(df_charge, df_solar, on='date')
+        df.lat = df.lat.abs()
+        self.df = df
+        self.targetIndex = self.extractTargetIndex()
+        
+
+        self.df.drop(['satellite_id', 'date', 'flow_speed'], axis=1, inplace=True)
+        
+        
+    
+    def __len__(self) -> int:
+        return len(self.targetIndex)
+    
+    def __getitem__(self, idx: int) -> Tuple[torch.tensor, torch.tensor, torch.tensor]:
+        target_idx = self.targetIndex[idx]
+
+        df_tmp = self.df.iloc[target_idx - self.window_size: target_idx+1]
+        # 帯電回数
+        breakpoint()
+        charge_count = df_tmp.charge_count.values[-1]
+        charge_count = torch.tensor([charge_count], dtype=torch.float32)
+
+        # 入力データ
+        tgt = self.get_latlon(df_tmp)
+        src = df_tmp.drop(['charge_count', 'lat', 'lon'], axis=1)
+        src = torch.tensor(src.values, dtype=torch.float32)
+
+        return src, tgt, charge_count
+        
+    
+    def extractTargetIndex(self) -> np.ndarray:
+        df_tmp = self.df[self.df.lat >= 60][self.window_size+1 :]
+        df_tmp = self.undersampling(df_tmp, num=1000)
+
+        # 緯度の平均と標準偏差を取得
+        self.lat_m = df_tmp.lat.mean()
+        self.lat_s = df_tmp.lat.std()
+        
+        return df_tmp.index.values
+
+
+    # アンダーサンプリング
+    def undersampling(self, df, num=1000, col: str ='charge_count'):
+
+        charge_counts = df[col].unique()
+        df_new = pd.DataFrame()
+
+        for count in charge_counts:
+            df_tmp = df[df[col] == count]
+            if len(df_tmp) > num:
+                df_tmp = df_tmp.sample(n=num)
+                df_new = pd.concat([df_new, df_tmp])
+        
+        df_new = df_new.sort_values(by='date')
+        # df_new.reset_index(drop=True, inplace=True)
+        
+        
+        return df_new
+    
+    # 太陽風データを正規化
+    def normalize_SolarWind(self, df_solar):
+        scaler = MinMaxScaler()
+        date = df_solar['date']
+        solar = df_solar.drop(['date'], axis=1)
+        df = scaler.fit_transform(solar)
+        df = pd.DataFrame(df, columns=solar.columns)
+        df['date'] = date
+        
+        return df
+    
+    # 緯度経度を正規化
+    def get_latlon(self, df):
+        latlon = df[['lat', 'lon']].values[-1].tolist()
+
+        # 緯度経度をラジアンに変換
+        lat = abs(latlon[0])
+        lon = latlon[1] * np.pi /12
+        # 緯度経度を正規化
+        lat = (lat - self.lat_m) / self.lat_s
+        lon = math.sin(lon/2)
+        tgt = [lat, lon]
+        
+        return torch.tensor(tgt).to(torch.float32)
