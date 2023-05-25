@@ -236,7 +236,8 @@ class MyDataset3(Dataset):
         self.targetIndex = self.extractTargetIndex()
         
 
-        self.df.drop(['satellite_id', 'date', 'flow_speed'], axis=1, inplace=True)
+        # self.df.drop(['satellite_id', 'date', 'flow_speed', ], axis=1, inplace=True)
+        self.df.drop(['satellite_id', 'date', 'flow_speed',  'AE_INDEX', 'AL_INDEX', 'AU_INDEX'], axis=1, inplace=True)
         
         
     
@@ -248,9 +249,9 @@ class MyDataset3(Dataset):
 
         df_tmp = self.df.iloc[target_idx - self.window_size: target_idx+1]
         # 帯電回数
-        breakpoint()
-        charge_count = df_tmp.charge_count.values[-1]
-        charge_count = torch.tensor([charge_count], dtype=torch.float32)
+        charge_count = self.df.iloc[target_idx].charge_count
+        charge_count = 0 if charge_count == 0 else 1
+        charge_count = torch.tensor(charge_count, dtype=torch.int64)
 
         # 入力データ
         tgt = self.get_latlon(df_tmp)
@@ -261,8 +262,14 @@ class MyDataset3(Dataset):
         
     
     def extractTargetIndex(self) -> np.ndarray:
-        df_tmp = self.df[self.df.lat >= 60][self.window_size+1 :]
-        df_tmp = self.undersampling(df_tmp, num=1000)
+        # オーロラ帯のデータを抽出
+        df_tmp = self.df[self.df.lat >= 55][self.window_size+1 :]
+        df_tmp.lon = df_tmp.lon.apply(lambda x: x * np.pi / 12)
+        df_tmp = df_tmp[(df_tmp.lon <= 2) | (df_tmp.lon >= 4.5)]
+        # df_tmp = self.undersampling(df_tmp, num=90)
+        df_tmp = self.cutTime(df_tmp)
+        df_tmp = self.undersampling_cls(df_tmp)
+        self.target_df = df_tmp
 
         # 緯度の平均と標準偏差を取得
         self.lat_m = df_tmp.lat.mean()
@@ -286,8 +293,21 @@ class MyDataset3(Dataset):
         df_new = df_new.sort_values(by='date')
         # df_new.reset_index(drop=True, inplace=True)
         
-        
         return df_new
+    
+    def undersampling_cls(self, df):
+        df_charge = df[df.charge_count >= 1]
+        df_nocharge = df[df.charge_count == 0].sample(n=len(df_charge))
+        df_new = pd.concat([df_charge, df_nocharge])
+        df_new = df_new.sort_values(by='date')
+
+        return df_new
+    
+    # AE_INDEXが2019年4月以降0であるため、それ以降のデータを削除
+    def cutTime(self, df):
+        df = df[df.date < '2019-04']
+        return df
+
     
     # 太陽風データを正規化
     def normalize_SolarWind(self, df_solar):
