@@ -349,8 +349,8 @@ class MyDataset4(Dataset):
         self.df_solar.set_index('date', inplace=True)
 
         # 説明変数を選択
-        self.df_solar.drop(['flow_speed', ], axis=1, inplace=True)
-        # self.df_solar.drop(['flow_speed',  'AE_INDEX', 'AL_INDEX', 'AU_INDEX'], axis=1, inplace=True)
+        # self.df_solar.drop(['flow_speed', ], axis=1, inplace=True)
+        self.df_solar.drop(['flow_speed',  'AE_INDEX', 'AL_INDEX', 'AU_INDEX'], axis=1, inplace=True)
 
         # 緯度の平均と標準偏差を取得
         self.lat_m = self.df_charge.lat.mean()
@@ -403,6 +403,119 @@ class MyDataset4(Dataset):
         df = self.cutTime(df)
         df = self.undersampling(df)
         return df
+    
+    def creatChargeDataFrame(self) -> pd.DataFrame:
+        # データの読み込み
+        df_charge_f16 = pd.read_csv('dmsp-f16.csv', parse_dates=['date'])
+        df_charge_f17 = pd.read_csv('dmsp-f17.csv', parse_dates=['date'])
+        df_charge_f18 = pd.read_csv('dmsp-f18.csv', parse_dates=['date'])
+        
+        # データの前処理
+        df_charge_f16 = self.extractTrainData(df_charge_f16)
+        df_charge_f17 = self.extractTrainData(df_charge_f17)
+        df_charge_f18 = self.extractTrainData(df_charge_f18)
+
+        # データの結合
+        df = pd.concat([df_charge_f16, df_charge_f17, df_charge_f18], axis=0)
+        df.reset_index(drop=True, inplace=True)
+        return df
+    
+    # 太陽風データを正規化
+    def normalize_SolarWind(self, df_solar: pd.DataFrame) -> pd.DataFrame:
+        scaler = MinMaxScaler()
+        date = df_solar['date']
+        solar = df_solar.drop(['date'], axis=1)
+        df = scaler.fit_transform(solar)
+        df = pd.DataFrame(df, columns=solar.columns)
+        df['date'] = date
+        
+        return df
+    
+    # 緯度経度を取得
+    def getLatLon(self, ser: pd.Series) -> Tuple[float, float]:
+        lat = ser.lat
+        lon = ser.lon
+        # 緯度経度を正規化
+        lat = (lat - self.lat_m) / self.lat_s
+        lon = math.sin(lon/2)
+        
+        latlon = [lat, lon]
+        return torch.tensor(latlon).to(torch.float32)
+    
+
+
+class MyDataset5(Dataset):
+    def __init__(self, window_size: int) -> None:
+        self.window_size = window_size
+        self.target_min = 10
+        # 帯電データを読み込み
+        self.df_charge = self.creatChargeDataFrame()
+        self.df_charge.sort_values(by='date', inplace=True)
+
+        # 太陽風データを読み込み
+        df_solar = pd.read_csv('solar_wind.csv', parse_dates=['date'])
+        self.df_solar = self.normalize_SolarWind(df_solar)
+        self.df_solar.set_index('date', inplace=True)
+
+        # 説明変数を選択
+        # self.df_solar.drop(['flow_speed', ], axis=1, inplace=True)
+        self.df_solar.drop(['flow_speed',  'AE_INDEX', 'AL_INDEX', 'AU_INDEX'], axis=1, inplace=True)
+
+        # 緯度の平均と標準偏差を取得
+        self.lat_m = self.df_charge.lat.mean()
+        self.lat_s = self.df_charge.lat.std()
+
+    def __len__(self) -> int:
+        return len(self.df_charge)
+    
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        target_df = self.df_charge.iloc[idx]
+        target_time = target_df.date
+        src = self.df_solar[target_time - pd.Timedelta(minutes=self.window_size-1): target_time]
+        src = torch.tensor(src.values, dtype=torch.float32)
+
+        tgt = self.getLatLon(target_df)
+
+        # 30分後帯電したかどうか
+        charge_count = target_df[f'charge_count_{self.target_min}min']
+        charge = 0 if charge_count == 0 else 1
+        charge = torch.tensor(charge, dtype=torch.int64)
+
+        return src, tgt, charge
+    
+    # アンダーサンプリング
+    def undersampling(self, df: pd.DataFrame) -> pd.DataFrame:
+        length = len(df[df.charge_count >= 1])
+        df_charge = df[df[f'charge_count_{self.target_min}min'] >= 1].sample(n=length)
+        df_nocharge = df[df[f'charge_count_{self.target_min}min'] == 0].sample(n=len(df_charge))
+        df_new = pd.concat([df_charge, df_nocharge])
+        df_new = df_new.sort_values(by='date')
+
+        return df_new
+    
+    # AE_INDEXが2019年4月以降0であるため、それ以降のデータを削除
+    def cutTime(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df[df.date < '2019-04']
+        return df
+    
+    # 緯度を制限する
+    def limitLatitude(self, df: pd.DataFrame) -> pd.DataFrame:
+        df.lat = df.lat.abs()
+        df.lon = df.lon.apply(lambda x: x * np.pi / 12)
+        df = df[df.lat >= 30]
+
+        return df
+    
+    # 学習データを作成
+    def extractTrainData(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df[self.window_size:]
+        df[f'charge_count_{self.target_min}min'] = df.charge_count.rolling(self.target_min).sum()
+        df.dropna(inplace=True)
+        df = self.limitLatitude(df)
+        df = self.cutTime(df)
+        df = self.undersampling(df)
+        return df
+    
     
     def creatChargeDataFrame(self) -> pd.DataFrame:
         # データの読み込み
